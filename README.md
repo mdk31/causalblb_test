@@ -16,5 +16,7 @@
 - **boot_rep_num**: An index of the bootstrap resample
 - **subset_num**: An index of the subset number
 - **replication**: An index of the replication number
+- **estim_full**: The estimate of the ATE on the full dataset
+- **sd_full**: An estimated of the *variance* (misnamed column) on the full dataset
 
 
