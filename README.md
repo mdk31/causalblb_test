@@ -19,4 +19,25 @@
 - **estim_full**: The estimate of the ATE on the full dataset
 - **sd_full**: An estimated of the *variance* (misnamed column) on the full dataset
 
+## high_n
+
+**Goal**: Check if coverage stays approximately the same by increasing the number of subsets while increasing the total sample size *n*.
+
+**Data Dictionary**:
+
+- **n**: The full sample size
+- **gamma**: The exponent for the subset size
+- **subsets**: The number of subsets for the BLB
+- **prop_form**: Whether the propensity score is correctly specified or misspecified
+- **estim_subset**: The estimate of the ATE in each subset, calculated using a DR estimator. In this case, both propensity and outcome model are correctly specified.
+- **sd_subset**: An estimate of the SE of the ATE in each subset. Calculated using the EIF.
+- **boot_reps**: A vector of bootstrap replicates of the ATE. 
+- **boot_rep_num**: An index of the bootstrap resample
+- **subset_num**: An index of the subset number
+- **replication**: An index of the replication number
+- **estim_full**: The estimate of the ATE on the full dataset
+- **sd_full**: An estimated of the *variance* (misnamed column) on the full dataset
+
+
+
 

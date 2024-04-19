@@ -1,0 +1,44 @@
+---
+title: "Bias"
+author: "Matt Kosko"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(data.table)
+library(ggplot2)
+library(pbapply)
+
+base_dir <- '~/Documents/HW/Research/CI/causalblb_test'
+
+source(file.path(base_dir, 'code/helper_funcs.R'))
+
+te <- 0.8
+sigma <- 1
+replications <- 1000
+r <- 100
+
+base_nm <- 'high_n'
+
+image_path <- 'images'
+dat_path <- 'data'
+
+
+```
+
+
+```{r}
+dat <- as.data.table(readRDS(file.path(base_dir, dat_path, paste0(base_nm, '_tmp'), 'coverage.rds')))
+```
+
+# Coverage
+
+```{r}
+tmp <- dat[, .(lower = boot:::perc.ci(boot_reps)[4], upper = boot:::perc.ci(boot_reps)[5]), 
+           by = c('subset_num', 'replication', 'n')][
+             ,.(lower = mean(lower), upper = mean(upper)), by = c('replication', 'n')
+           ]
+tmp[, .(coverage = mean(lower <= te & upper >= te)), by = c('n')]
+```
