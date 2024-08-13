@@ -1,0 +1,331 @@
+---
+title: "Update"
+author: "Matt Kosko"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(data.table)
+library(microbenchmark)
+library(ggplot2)
+
+base_dir <- '~/Documents/HW/Research/CI/causalblb_test'
+image_path <- 'images'
+dat_path <- 'data'
+te <- 0.8
+
+```
+
+
+# METHOD 1 - Full Sample + BLB Bootstrapped SE (Wald CI Formed at End)
+
+
+```{r}
+base_nm <- 'blb_standard_error_v1'
+temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp'))
+cblb <- as.data.table(readRDS(file.path(temp_dir, 'coverage.rds')))
+cblb[, `:=`(lower_ci = tau_hat - qnorm(0.975)*boot_sd,
+            upper_ci = tau_hat + qnorm(0.975)*boot_sd)][
+              , .(coverage = mean(lower_ci <= te & upper_ci  >= te)), by = c('n', 'subsets', 'prop_form', 'out_form')]
+
+```
+
+# METHOD 2 - Bias Correct BLB Replicates in Each Set, Take the Mean for an Estimate of the ATE, Wald Interval at the End
+
+```{r}
+base_nm <- 'blb_standard_error_v2'
+temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp'))
+cblb <- as.data.table(readRDS(file.path(temp_dir, 'coverage.rds')))
+cblb[, `:=`(lower_ci = tau_hat - qnorm(0.975)*boot_sd,
+            upper_ci = tau_hat + qnorm(0.975)*boot_sd)][
+              , .(coverage = mean(lower_ci <= te & upper_ci  >= te)), by = c('n', 'subsets', 'prop_form', 'out_form')]
+```
+
+# METHOD 3 - Bias Correct BLB Replicates, Take Percentile CI In Each Subset
+
+```{r}
+base_nm <- 'blb_standard_error_v3'
+temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp'))
+cblb <- as.data.table(readRDS(file.path(temp_dir, 'coverage.rds')))
+cblb[, .(coverage = mean(lower_ci <= te & upper_ci  >= te)), by = c('n', 'subsets', 'prop_form', 'out_form')]
+```
+
+# Convergence of Each Replicate
+
+```{r}
+base_nm <- 'convergence'
+temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp'))
+cblb <- as.data.table(readRDS(file.path(temp_dir, 'coverage.rds')))
+cblb <- cblb[gamma != 0.5]
+
+setorder(cblb, rep, subset_num)
+cblb[, `:=`(blb_lower = cumsum(blb_lower)/subset_num, blb_upper = cumsum(blb_upper)/subset_num), 
+             by = c('rep', 'n', 'gamma', 'subsets', 'bias_correct')]
+cblb[, `:=`(error = abs(true_lower - blb_lower)/2 + abs(true_upper - blb_upper)/2)]
+trajectory <- cblb[, .(mean_error = mean(error)), by = c('n', 'gamma', 'subsets', 'bias_correct', 'subset_num')]
+```
+
+
+```{r, results='asis', fig.height=9, fig.width=8}
+reps <- unique(cblb$rep)
+
+for(i in reps){
+  tmp <- cblb[rep == i]
+  
+  p <- ggplot(tmp, aes(x = subset_num)) +
+    geom_line(aes(y = blb_lower, color = 'Lower BLB CI')) +
+    geom_line(aes(y = blb_upper, color = 'Upper BLB CI')) +
+    geom_hline(aes(yintercept= true_lower)) +
+    geom_hline(aes(yintercept = true_upper)) +
+    facet_grid(gamma ~ bias_correct) +
+    ggtitle(paste0('Replicate ', i))
+  
+  print(p)
+}
+
+```
+
+# Error Convergence
+
+```{r}
+ggplot(trajectory, aes(x = subset_num, y = mean_error, color = factor(gamma))) + 
+  geom_line() +
+  facet_grid(~ bias_correct) +
+  theme_minimal()
+```
+
+# Timing
+
+```{r}
+base_nm <- 'blb_standard_error_ml_timing_full'
+temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp'))
+full <- as.data.table(readRDS(file.path(temp_dir, 'timing.rds')))
+full[, `:=`(type = 'Regular bootstrap')]
+
+base_nm <- 'blb_standard_error_ml_timing'
+temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp'))
+blb <- as.data.table(readRDS(file.path(temp_dir, 'timing.rds'))) 
+blb[, `:=`(type = paste0('Cores: ', cores, '; Subsets = ', subsets, '; gamma = ', gamma))]
+blb[, `:=`(cores = NULL, subsets = NULL, gamma = NULL)]
+
+out <- rbindlist(list(blb, full))
+
+ggplot(out, aes(x = type, y = time_elapsed)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+
+
+<!-- # Bias Correction Using the Subset Estimate -->
+
+<!-- ```{r} -->
+<!-- base_nm <- 'blb_standard_error_v4' -->
+<!-- temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp')) -->
+<!-- cblb <- as.data.table(readRDS(file.path(temp_dir, 'coverage.rds'))) -->
+<!-- cat('Percentile Confidence Intervals Using BLB:\n') -->
+<!-- cblb[, .(coverage = mean(lower_ci <= te & upper_ci  >= te)), by = c('n', 'subsets', 'prop_form', 'out_form')] -->
+
+<!-- ``` -->
+
+
+<!-- # Comparison of ATE Estimates Across Replicates -->
+
+<!-- ```{r} -->
+<!-- base_nm <- 'blb_standard_error' -->
+<!-- temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp')) -->
+<!-- cblb_full <- as.data.table(readRDS(file.path(temp_dir, 'coverage.rds'))) -->
+<!-- cblb_full[, `:=`(type = 'Full Sample Estimate')] -->
+<!-- ``` -->
+
+<!-- ````{r} -->
+<!-- base_nm <- 'blb_standard_error_v2' -->
+<!-- temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp')) -->
+<!-- cblb_mean <- as.data.table(readRDS(file.path(temp_dir, 'coverage.rds'))) -->
+<!-- cblb_mean[, `:=`(type = 'Mean of Bootstraps Estimate')] -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- full <- rbindlist(list(cblb_mean, cblb_full)) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- full <- full[subsets == 10] -->
+<!-- full[, `:=`(identifier = paste0('out_form: ', out_form, ', prop_form: ', prop_form, ', n: ', n, ', gamma: ', gamma))] -->
+<!-- unqs <- unique(full$identifier) -->
+<!-- ``` -->
+
+<!-- ```{r, results = 'asis'} -->
+<!-- for(i in unqs){ -->
+<!--   tmp <- full[identifier == i] -->
+
+<!--   p <- ggplot(tmp, aes(x = tau_hat, fill = type)) + -->
+<!--     geom_histogram() + -->
+<!--     ggtitle(i) -->
+
+<!--   print(p) -->
+<!-- } -->
+<!-- ``` -->
+
+
+
+<!-- # BLB Standard Error -->
+
+<!-- ```{r} -->
+<!-- base_nm <- 'blb_standard_error' -->
+<!-- temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp')) -->
+<!-- cblb <- as.data.table(readRDS(file.path(temp_dir, 'coverage.rds'))) -->
+<!-- cat('Wald Confidence Intervals Using BLB Standard Error Estimate:\n') -->
+<!-- cblb[, `:=`(lower_ci = tau_hat - qnorm(0.975)*boot_sd, -->
+<!--             upper_ci = tau_hat + qnorm(0.975)*boot_sd)][ -->
+<!--               , .(coverage = mean(lower_ci <= te & upper_ci  >= te)), by = c('n', 'gamma', 'subsets', 'prop_form', 'out_form')] -->
+<!-- ``` -->
+
+<!-- # BLB Standard Error (Mean Bootstrap) -->
+
+<!-- ```{r} -->
+<!-- base_nm <- 'blb_standard_error_v2' -->
+<!-- temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp')) -->
+<!-- cblb <- as.data.table(readRDS(file.path(temp_dir, 'coverage.rds'))) -->
+<!-- cat('Wald Confidence Intervals Using BLB Standard Error Estimate (Mean Bootstraps):\n') -->
+<!-- cblb[, `:=`(lower_ci = tau_hat - qnorm(0.975)*boot_sd, -->
+<!--             upper_ci = tau_hat + qnorm(0.975)*boot_sd)][ -->
+<!--               , .(coverage = mean(lower_ci <= te & upper_ci  >= te)), by = c('n', 'subsets', 'prop_form', 'out_form')] -->
+<!-- ``` -->
+
+
+<!-- # BLB Basic Confidence Intervals -->
+
+<!-- ```{r} -->
+<!-- base_nm <- 'basic_bootstrap' -->
+<!-- temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp')) -->
+<!-- cblb <- as.data.table(readRDS(file.path(temp_dir, 'coverage.rds'))) -->
+<!-- cat('Basic Bootstrap Confidence Intervals Using BLB:\n') -->
+<!-- cblb[, `:=`(lower_ci = 2*tau_hat - quantile2,  -->
+<!--             upper_ci = 2*tau_hat - quantile1)][ -->
+<!--               , .(coverage = mean(lower_ci <= te & upper_ci  >= te)), by = c('n', 'subsets', 'prop_form', 'out_form')] -->
+<!-- ``` -->
+
+
+<!-- # BLB Basic Confidence Intervals (r = 500) -->
+
+<!-- ```{r} -->
+<!-- base_nm <- 'basic_bootstrap_highr' -->
+<!-- temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp')) -->
+<!-- cblb <- as.data.table(readRDS(file.path(temp_dir, 'coverage.rds'))) -->
+<!-- cat('Basic Bootstrap Confidence Intervals Using BLB (r = 500):\n') -->
+<!-- cblb[, `:=`(lower_ci = 2*tau_hat - quantile2,  -->
+<!--             upper_ci = 2*tau_hat - quantile1)][ -->
+<!--               , .(coverage = mean(lower_ci <= te & upper_ci  >= te)), by = c('n', 'subsets', 'prop_form', 'out_form')] -->
+<!-- ``` -->
+
+<!-- # Weighted Regression in Each Bootstrap Resample -->
+
+<!-- ```{r} -->
+<!-- base_nm <- 'parametric_weighted_highergamma_v2' -->
+<!-- temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp')) -->
+<!-- cblb <- as.data.table(readRDS(file.path(temp_dir, 'coverage.rds'))) -->
+<!-- cat('The Weighted Regression Bootstrap Confidence Intervals:\n') -->
+<!-- cblb[, .(coverage = mean(lower_ci <= te & upper_ci  >= te)), by = c('n', 'subsets', 'prop_form', 'out_form')] -->
+
+<!-- ``` -->
+
+<!-- # Weighted Regression Higher Gamma ($\gamma = 0.8$) -->
+
+<!-- ```{r} -->
+<!-- base_nm <- 'parametric_weighted_highergamma' -->
+<!-- temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp')) -->
+<!-- cblb <- as.data.table(readRDS(file.path(temp_dir, 'coverage.rds'))) -->
+
+<!-- tmp <- cblb[, .(lower = boot:::perc.ci(boot_reps)[4], upper = boot:::perc.ci(boot_reps)[5]),  -->
+<!--            by = c('subset_num', 'replication', 'n', 'subsets', 'prop_form', 'out_form')][ -->
+<!--              ,.(lower = mean(lower), upper = mean(upper)), by = c('replication', 'n', 'subsets', 'prop_form', 'out_form') -->
+<!--            ] -->
+<!-- cat('The Weighted Regression Bootstrap Confidence Intervals (gamma = 0.8):\n') -->
+<!-- tmp[, .(coverage = mean(lower <= te & upper >= te)), by = c('n', 'subsets', 'prop_form', 'out_form')] -->
+<!-- ``` -->
+
+<!-- # TIMING -->
+
+<!-- ```{r} -->
+<!-- # Simulate data -->
+<!-- set.seed(123) -->
+<!-- n <- 10000 -->
+<!-- b <- round(n^0.7) -->
+<!-- x <- rnorm(n) -->
+<!-- y <- 2 + 3 * x + rnorm(n) -->
+
+<!-- # Create a data frame -->
+<!-- data <- data.table(x = x, y = y) -->
+<!-- sub_data <- data[sample(1:n, size = b, replace = FALSE)] -->
+<!-- rep_data <- sub_data[sample(1:b, size = n, replace = TRUE)] -->
+
+<!-- aggregated_data <- aggregate(y ~ x, rep_data, FUN = function(x) c(count = length(x), mean = mean(x))) -->
+<!-- aggregated_data <- data.frame(x = aggregated_data$x, y = aggregated_data$y[, "mean"], weights = -->
+<!--                                 aggregated_data$y[, "count"]) -->
+
+<!-- m1 <- microbenchmark({ -->
+<!--   lm_out <- lm(y ~ x, data = data) -->
+<!-- }, unit = 'milliseconds') -->
+<!-- m2 <- microbenchmark({ -->
+<!--   lm_out <- lm(y ~ x, data = sub_data) -->
+<!-- }, unit = 'milliseconds') -->
+
+<!-- m3 <- microbenchmark({ -->
+<!--   lm_rep <- lm(y ~ x, data = aggregated_data, weights = weights) -->
+<!-- }, unit = 'milliseconds') -->
+
+<!-- print(m1) -->
+<!-- cat('\n') -->
+<!-- print(m2) -->
+<!-- cat('\n') -->
+<!-- print(m3) -->
+
+<!-- ``` -->
+
+<!-- # SVM (COST UPDATE) -->
+
+<!-- ```{r} -->
+<!-- base_nm <- 'svm' -->
+<!-- temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp')) -->
+<!-- cblb <- as.data.table(readRDS(file.path(temp_dir, 'coverage.rds'))) -->
+
+<!-- tmp <- cblb[, .(lower = boot:::perc.ci(boot_reps)[4], upper = boot:::perc.ci(boot_reps)[5]),  -->
+<!--            by = c('subset_num', 'replication', 'n', 'subsets', 'cost')][ -->
+<!--              ,.(lower = mean(lower), upper = mean(upper)), by = c('replication', 'n', 'subsets', 'cost') -->
+<!--            ] -->
+<!-- cat('The SVM Confidence Intervals with Cost (UPDATE)\n') -->
+<!-- tmp[, .(coverage = mean(lower <= te & upper >= te)), by = c('n', 'subsets', 'cost')] -->
+<!-- ``` -->
+
+<!-- # Weighted Bootstrap -->
+
+<!-- ```{r} -->
+<!-- base_nm <- 'weighted_bootstrap' -->
+<!-- temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp')) -->
+<!-- cblb <- as.data.table(readRDS(file.path(temp_dir, 'coverage.rds'))) -->
+
+<!-- tmp <- cblb[, .(lower = boot:::perc.ci(boot_reps)[4], upper = boot:::perc.ci(boot_reps)[5]),  -->
+<!--            by = c('subset_num', 'replication', 'n', 'subsets')][ -->
+<!--              ,.(lower = mean(lower), upper = mean(upper)), by = c('replication', 'n', 'subsets') -->
+<!--            ] -->
+<!-- cat('Weighted Boostrap Intervals\n') -->
+<!-- tmp[, .(coverage = mean(lower <= te & upper >= te)), by = c('n', 'subsets')] -->
+<!-- ``` -->
+
+<!-- # Increasing subsets -->
+
+<!-- ```{r} -->
+<!-- base_nm <- 'fixed_n_high_s' -->
+<!-- temp_dir <- file.path(base_dir, dat_path, paste0(base_nm, '_tmp')) -->
+<!-- cblb <- as.data.table(readRDS(file.path(temp_dir, 'coverage.rds'))) -->
+
+<!-- tmp <- cblb[, .(lower = boot:::perc.ci(boot_reps)[4], upper = boot:::perc.ci(boot_reps)[5]),  -->
+<!--            by = c('subset_num', 'replication', 'n', 'subsets')][ -->
+<!--              ,.(lower = mean(lower), upper = mean(upper)), by = c('replication', 'n', 'subsets') -->
+<!--            ] -->
+<!-- cat('Standard boostrapping with increasing subsets:\n') -->
+<!-- tmp[, .(coverage = mean(lower <= te & upper >= te)), by = c('n', 'subsets')] -->
+<!-- ``` -->

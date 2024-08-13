@@ -1,0 +1,44 @@
+---
+title: "Mean BLB"
+author: "Matt Kosko"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(parallel)
+```
+
+```{r}
+N <- 50000
+r <- 100
+gamma <- 0.7
+b <- round(N^gamma)
+subsets <- 50
+replicates <- 1000
+
+out <- mclapply(1:replicates, function(rep){
+  # Original data
+  x <- rnorm(N)
+  
+  out <- lapply(1:subsets, function(sub){
+    x_sub <- sample(x, size = b, replace = FALSE)
+    
+    blb <- replicate(r, {
+      x_sub_boot <- sample(x_sub, size = N, replace = TRUE)
+      mean(x_sub_boot)
+    })
+    ci <- boot:::perc.ci(blb)
+    data.frame(lower_ci = ci[4], upper_ci = ci[5])
+  })
+  out <- do.call(rbind, out)
+  out$lower_ci <- mean(out$lower_ci)
+  out$upper_ci <- mean(out$upper_ci)
+  out
+}, mc.cores = 5)
+
+out <- do.call(rbind, out)
+
+cat('Coverage: ', mean(out$lower_ci <= 0 & out$upper_ci >= 0))
+```

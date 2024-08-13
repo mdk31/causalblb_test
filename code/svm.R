@@ -1,6 +1,6 @@
 library(data.table)
 library(pbapply)
-
+library(e1071)
 base_dir <- '~/Documents/HW/Research/CI/causalblb_test'
 
 source(file.path(base_dir, 'code/helper_funcs.R'))
@@ -9,8 +9,9 @@ te <- 0.8
 sigma <- 1
 replications <- 1000
 r <- 100
+K <- 10
 
-base_nm <- 'high_n'
+base_nm <- 'svm'
 
 image_path <- 'images'
 dat_path <- 'data'
@@ -31,11 +32,19 @@ if(!file.exists(img_tmp_dir)){
 #                                         subsets = c(25),
 #                                         prop_form = c('correct'),
 #                                         stringsAsFactors = FALSE))
-ns <- c(10000, 20000, 50000, 100000)
-hyper_grid <- data.table(n = ns,
-                        gamma = c(0.7),
-                        subsets = 4*round(ns^0.3),
-                        prop_form = c('correct'))
+ns <- c(10000)
+# hyper_grid <- data.table(n = ns,
+#                         gamma = c(rep(0.7, 1), 1.0),
+#                         subsets = c(20, 40, 60, 1),
+#                         prop_form = c('correct'))
+
+hyper_grid <- as.data.table(expand.grid(n = ns,
+                                        cost = c(0.01, 1, 5, 10),
+                                        gamma = c(0.7),
+                                        subsets = c(10, 20, 40),
+                                        prop_form = c('correct'), stringsAsFactors = FALSE))
+
+hyper_grid <- rbindlist(list(hyper_grid, data.table(n = ns, cost = 0.01, gamma = 1, subsets = 1, prop_form = 'correct')))
 
 seq_row <- seq_len(nrow(hyper_grid))
 
@@ -57,20 +66,22 @@ if(file.exists(file.path(temp_dir, 'coverage.rds'))){
       
     }
     subsets <- grid_val$subsets
-    
+    cost <- grid_val$cost
     out <- pblapply(seq_len(replications), function(rp){
       set.seed(rp)
       dat <- kangschafer3(n = n, te = te, sigma = sigma, beta_overlap = 0.5)
       # Full sample
-      m <- glm(y ~ Tr + X1 + X2, data = dat, family = 'gaussian')
-      g <- glm(as.formula(form), data = dat, family = 'binomial')
+      m <- svm(y ~ Tr + X1 + X2, data = dat, type = 'eps-regression', kernel = 'linear',
+               cost = 0.01)
+      g <- svm(as.formula(form), data = dat, type = 'C-classification', kernel = 'linear',
+               cost = 0.01, probability = TRUE)
       
-      prop_score <- predict(g, type = 'response')
+      prop_score <- predict(g, dat, probability = TRUE)
       m1 <- predict(m, data.frame(X1 = dat$X1, X2 = dat$X2, Tr = 1))
       m0 <- predict(m, data.frame(X1 = dat$X1, X2 = dat$X2, Tr = 0))
       
       full_dat <- copy(dat)
-      full_dat$prop_score <- prop_score
+      full_dat$prop_score <- attr(prop_score, 'probabilities')[, 2]
       full_dat$m1 <- m1
       full_dat$m0 <- m0
       
@@ -81,23 +92,36 @@ if(file.exists(file.path(temp_dir, 'coverage.rds'))){
       
       blb_out <- lapply(partitions, function(i){
         tmp_dat <- dat[i]
-        m <- glm(y ~ Tr + X1 + X2, data = tmp_dat, family = 'gaussian')
-        g <- glm(as.formula(form), data = tmp_dat, family = 'binomial')
-
-        prop_score <- predict(g, type = 'response')
-        m1 <- predict(m, data.frame(X1 = tmp_dat$X1, X2 = tmp_dat$X2, Tr = 1))
-        m0 <- predict(m, data.frame(X1 = tmp_dat$X1, X2 = tmp_dat$X2, Tr = 0))
-        
-        tmp_dat$prop_score <- prop_score
-        tmp_dat$m1 <- m1
-        tmp_dat$m0 <- m0
-        
-        phi1_subset <- (tmp_dat$Tr/tmp_dat$prop_score)*(tmp_dat$y - tmp_dat$m1) + tmp_dat$m1
-        phi0_subset <- (1 - tmp_dat$Tr)/(1 - tmp_dat$prop_score)*(tmp_dat$y - tmp_dat$m0) + tmp_dat$m0
+        folds <- split(part_idx, sample(rep(1:K, length.out = length(part_idx))))
+        cross_dat <- lapply(folds, function(test_idx){
+          train_idx <- setdiff(part_idx, test_idx)
+          train_dat <- tmp_dat[train_idx]
+          test_dat <- tmp_dat[-train_idx]
+          
+          m <- svm(y ~ Tr + X1 + X2, data = train_dat, type = 'eps-regression', kernel = 'linear',
+                   cost = cost)
+          g <- svm(as.formula(form), data = train_dat, type = 'C-classification', kernel = 'linear',
+                   cost = cost, probability = TRUE)
+          
+          prop_score <- predict(g, test_dat, probability = TRUE)
+          m1 <- predict(m, data.frame(X1 = test_dat$X1, X2 = test_dat$X2, Tr = 1))
+          m0 <- predict(m, data.frame(X1 = test_dat$X1, X2 = test_dat$X2, Tr = 0))
+          
+          test_dat$prop_score <- attr(prop_score, 'probabilities')[, 2]
+          test_dat$m1 <- m1
+          test_dat$m0 <- m0
+          
+          return(test_dat)
+          
+        })
+  
+        cross_dat <- rbindlist(cross_dat)
+        phi1_subset <- (cross_dat$Tr/cross_dat$prop_score)*(cross_dat$y - cross_dat$m1) + cross_dat$m1
+        phi0_subset <- (1 - cross_dat$Tr)/(1 - cross_dat$prop_score)*(cross_dat$y - cross_dat$m0) + cross_dat$m0
 
         blb_reps <- replicate(r, {
           boot_idx <- sample(part_idx, size = n, replace = TRUE)
-          boot_dat <- tmp_dat[boot_idx]
+          boot_dat <- cross_dat[boot_idx]
           phi1 <- (boot_dat$Tr/boot_dat$prop_score)*(boot_dat$y - boot_dat$m1) + boot_dat$m1
           phi0 <- (1 - boot_dat$Tr)/(1 - boot_dat$prop_score)*(boot_dat$y - boot_dat$m0) + boot_dat$m0
           mean(phi1) - mean(phi0)
@@ -109,7 +133,7 @@ if(file.exists(file.path(temp_dir, 'coverage.rds'))){
                    boot_reps = blb_reps,
                    boot_rep_num = seq_len(r))
       })
-      
+
       blb_out <- rbindlist(blb_out)
       blb_out[, `:=`(subset_num = rep(seq_along(partitions), each = r),
                      replication = rp,
@@ -122,7 +146,8 @@ if(file.exists(file.path(temp_dir, 'coverage.rds'))){
     out[, `:=`(n = n,
                gamma = gamma,
                subsets = subsets,
-               prop_form = prop_form)]
+               prop_form = prop_form, 
+               cost = cost)]
     out
   })
   cblb <- rbindlist(cblb)
@@ -130,8 +155,8 @@ if(file.exists(file.path(temp_dir, 'coverage.rds'))){
 }
 
 tmp <- cblb[, .(lower = boot:::perc.ci(boot_reps)[4], upper = boot:::perc.ci(boot_reps)[5]), 
-           by = c('subset_num', 'replication', 'n')][
-             ,.(lower = mean(lower), upper = mean(upper)), by = c('replication', 'n')
+           by = c('subset_num', 'replication', 'n', 'subsets', 'cost')][
+             ,.(lower = mean(lower), upper = mean(upper)), by = c('replication', 'n', 'subsets', 'cost')
            ]
-tmp[, .(coverage = mean(lower <= te & upper >= te)), by = c('n')]
+tmp[, .(coverage = mean(lower <= te & upper >= te)), by = c('n', 'subsets', 'cost')]
 

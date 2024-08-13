@@ -10,7 +10,7 @@ sigma <- 1
 replications <- 1000
 r <- 100
 
-base_nm <- 'high_n'
+base_nm <- 'fixed_n_high_s'
 
 image_path <- 'images'
 dat_path <- 'data'
@@ -31,10 +31,10 @@ if(!file.exists(img_tmp_dir)){
 #                                         subsets = c(25),
 #                                         prop_form = c('correct'),
 #                                         stringsAsFactors = FALSE))
-ns <- c(10000, 20000, 50000, 100000)
+ns <- c(10000)
 hyper_grid <- data.table(n = ns,
                         gamma = c(0.7),
-                        subsets = 4*round(ns^0.3),
+                        subsets = c(60, 100, 400),
                         prop_form = c('correct'))
 
 seq_row <- seq_len(nrow(hyper_grid))
@@ -130,8 +130,8 @@ if(file.exists(file.path(temp_dir, 'coverage.rds'))){
 }
 
 tmp <- cblb[, .(lower = boot:::perc.ci(boot_reps)[4], upper = boot:::perc.ci(boot_reps)[5]), 
-           by = c('subset_num', 'replication', 'n')][
-             ,.(lower = mean(lower), upper = mean(upper)), by = c('replication', 'n')
+           by = c('subset_num', 'replication', 'n', 'subsets')][
+             ,.(lower = mean(lower), upper = mean(upper)), by = c('replication', 'n', 'subsets')
            ]
-tmp[, .(coverage = mean(lower <= te & upper >= te)), by = c('n')]
+tmp[, .(coverage = mean(lower <= te & upper >= te)), by = c('n', 'subsets')]
 

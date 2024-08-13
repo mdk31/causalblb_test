@@ -1,6 +1,6 @@
 library(data.table)
 library(pbapply)
-
+library(caret)
 base_dir <- '~/Documents/HW/Research/CI/causalblb_test'
 
 source(file.path(base_dir, 'code/helper_funcs.R'))
@@ -10,7 +10,7 @@ sigma <- 1
 replications <- 1000
 r <- 100
 
-base_nm <- 'high_n'
+base_nm <- 'penalization'
 
 image_path <- 'images'
 dat_path <- 'data'
@@ -31,11 +31,12 @@ if(!file.exists(img_tmp_dir)){
 #                                         subsets = c(25),
 #                                         prop_form = c('correct'),
 #                                         stringsAsFactors = FALSE))
-ns <- c(10000, 20000, 50000, 100000)
-hyper_grid <- data.table(n = ns,
+ns <- c(10000)
+hyper_grid <- as.data.table(expand.grid(n = ns,
                         gamma = c(0.7),
-                        subsets = 4*round(ns^0.3),
-                        prop_form = c('correct'))
+                        subsets = c(10, 20),
+                        lambda = c(0, 0.001, 0.01),
+                        prop_form = c('correct'), stringsAsFactors = FALSE))
 
 seq_row <- seq_len(nrow(hyper_grid))
 
@@ -57,15 +58,34 @@ if(file.exists(file.path(temp_dir, 'coverage.rds'))){
       
     }
     subsets <- grid_val$subsets
+    lambda <- grid_val$lambda
+    lambda_grid <- expand.grid(alpha = 0, lambda = lambda)
     
     out <- pblapply(seq_len(replications), function(rp){
       set.seed(rp)
       dat <- kangschafer3(n = n, te = te, sigma = sigma, beta_overlap = 0.5)
+      dat$Tr2 <- factor(dat$Tr)
+      levels(dat$Tr2) <- make.names(levels(dat$Tr2))
+      # Update prop_formula
+      prop_formula <- update.formula(as.formula(form), Tr2 ~ .)
       # Full sample
-      m <- glm(y ~ Tr + X1 + X2, data = dat, family = 'gaussian')
-      g <- glm(as.formula(form), data = dat, family = 'binomial')
       
-      prop_score <- predict(g, type = 'response')
+      # Train the ridge regression model without cross-validation
+      m <- train(y ~ Tr + X1 + X2, 
+                 data = dat,
+                 family = 'gaussian',
+                 method = "glmnet",
+                 trControl = trainControl(method = "none"), 
+                 tuneGrid = lambda_grid)
+      
+      g <- train(as.formula(prop_formula), 
+                 data = dat,
+                 family = 'binomial',
+                 method = "glmnet",
+                 trControl = trainControl(method = "none"), 
+                 tuneGrid = lambda_grid)
+      
+      prop_score <- predict(g, type = 'prob')[, 2]
       m1 <- predict(m, data.frame(X1 = dat$X1, X2 = dat$X2, Tr = 1))
       m0 <- predict(m, data.frame(X1 = dat$X1, X2 = dat$X2, Tr = 0))
       
@@ -81,10 +101,21 @@ if(file.exists(file.path(temp_dir, 'coverage.rds'))){
       
       blb_out <- lapply(partitions, function(i){
         tmp_dat <- dat[i]
-        m <- glm(y ~ Tr + X1 + X2, data = tmp_dat, family = 'gaussian')
-        g <- glm(as.formula(form), data = tmp_dat, family = 'binomial')
-
-        prop_score <- predict(g, type = 'response')
+        m <- train(y ~ Tr + X1 + X2, 
+                   data = tmp_dat,
+                   family = 'gaussian',
+                   method = "glmnet",
+                   trControl = trainControl(method = "none"), 
+                   tuneGrid = lambda_grid)
+        
+        g <- train(as.formula(prop_formula), 
+                   data = tmp_dat,
+                   family = 'binomial',
+                   method = "glmnet",
+                   trControl = trainControl(method = "none"), 
+                   tuneGrid = lambda_grid)
+        
+        prop_score <- predict(g, type = 'prob')[, 2]
         m1 <- predict(m, data.frame(X1 = tmp_dat$X1, X2 = tmp_dat$X2, Tr = 1))
         m0 <- predict(m, data.frame(X1 = tmp_dat$X1, X2 = tmp_dat$X2, Tr = 0))
         
@@ -121,6 +152,7 @@ if(file.exists(file.path(temp_dir, 'coverage.rds'))){
     out <- rbindlist(out)
     out[, `:=`(n = n,
                gamma = gamma,
+               lambda = lambda,
                subsets = subsets,
                prop_form = prop_form)]
     out
@@ -130,8 +162,8 @@ if(file.exists(file.path(temp_dir, 'coverage.rds'))){
 }
 
 tmp <- cblb[, .(lower = boot:::perc.ci(boot_reps)[4], upper = boot:::perc.ci(boot_reps)[5]), 
-           by = c('subset_num', 'replication', 'n')][
-             ,.(lower = mean(lower), upper = mean(upper)), by = c('replication', 'n')
+           by = c('subset_num', 'replication', 'n', 'subsets', 'lambda')][
+             ,.(lower = mean(lower), upper = mean(upper)), by = c('replication', 'n', 'subsets', 'lambda')
            ]
-tmp[, .(coverage = mean(lower <= te & upper >= te)), by = c('n')]
+tmp[, .(coverage = mean(lower <= te & upper >= te)), by = c('n', 'subsets', 'lambda')]
 

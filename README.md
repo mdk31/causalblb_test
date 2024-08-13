@@ -39,5 +39,20 @@
 - **sd_full**: An estimated of the *variance* (misnamed column) on the full dataset
 
 
+## svm
+
+**Goal**: Check the coverage compared to the full bootstrap using SVM to estimate the nuisance functions. 
+
+**Data Dictionary**:
+
+
+## weighted_bootstrap
+
+**Goal**: Do separate treatment and control group bootstrappings. 
+
+**Data Dictionary**:
+
+
+
 
 
