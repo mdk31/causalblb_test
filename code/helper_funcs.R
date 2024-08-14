@@ -61,10 +61,7 @@ causal_blb <- function(data, y_formula, prop_formula, y_method, prop_method, r =
                                         method = prop_method,
                                         trControl = caret::trainControl(method = 'none', classProbs = TRUE),
                                         tuneGrid = prop_tune, weights = M[, bt]), prop_args))
-      
-      
-      # Calculate full sample
-      # Full sample
+
       prop_score <- predict(g, type = 'prob')[, 1]
       pred_data <- data.table::copy(tmp_dat)
       pred_data[[W]] <- 1

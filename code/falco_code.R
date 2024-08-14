@@ -11,6 +11,9 @@ causal_blb(dat,
            y_method = 'glm', 
            prop_method = 'glm', 
            y_formula = y ~ Tr + X1 + X2, 
-           prop_formula = Tr ~ X1 + X2, cores = 4)
+           prop_formula = Tr ~ X1 + X2, 
+           subsets = 10, 
+           r = 100,
+           cores = 4)
 
 
